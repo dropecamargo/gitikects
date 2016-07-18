@@ -4,6 +4,7 @@
 // error_reporting(E_ALL|E_STRICT);
 
 require_once 'postgresql.php'; 
+require "PHPMailer_v2.0.0/class.phpmailer.php";
 
 class Functions {
 
@@ -33,7 +34,7 @@ class Functions {
         return $data;
    	}
 
-   	public function GetTicketProblems()
+   	public function getTicketProblems()
    	{
 		$result = $this->db->getTable('ticketsproblem_code, ticketsproblem_name', 'business.ticketsproblems');
 		
@@ -49,29 +50,57 @@ class Functions {
         return $data;
 	}
 
+	public function getOrderProblemTypes()
+   	{
+		$result = $this->db->getTable('orderproblemtype_code, orderproblemtype_name', 'business.orderproblemtypes');
+		
+		$data = array();
+		while ($arr = pg_fetch_array($result)) { 
+
+			$object = new stdClass();
+			$object->key = $arr['orderproblemtype_code'];
+			$object->value = $arr['orderproblemtype_name'];
+
+			$data[] = $object;
+        }
+	    return $data;
+	}
+
 	public function isValidTicket($arrayForm)
 	{
-		if(!isset($arrayForm['placa']) || !$arrayForm['placa'] || trim($arrayForm['placa']) == ''){
+		if(!isset($arrayForm['placa']) || !$arrayForm['placa'] || trim($arrayForm['placa']) == '') {
 			return 'Por favor ingrese placa.';
 		}
 
-		if(!isset($arrayForm['solicita']) || !$arrayForm['solicita'] || trim($arrayForm['solicita']) == ''){
-			return 'Por favor ingrese nombre de la persona que solicita.';
+		if(!isset($arrayForm['email']) || !$arrayForm['email'] || trim($arrayForm['email']) == '') {
+			return 'Por favor ingrese email.';
+		}
+
+		if(!isset($arrayForm['confirm_email']) || !$arrayForm['confirm_email'] || trim($arrayForm['confirm_email']) == '') {
+			return 'Por favor ingrese confirmaci&oacute;n de email.';
 		}
 		
-		if(!isset($arrayForm['telefono']) || !$arrayForm['telefono'] || trim($arrayForm['telefono']) == ''){
+		if(trim($arrayForm['email']) != $arrayForm['confirm_email']) {
+			return 'Las direcci&oacute;nes de email que introdujo no coinciden.';
+		}
+
+		if(!isset($arrayForm['solicita']) || !$arrayForm['solicita'] || trim($arrayForm['solicita']) == '') {
+			return 'Por favor ingrese nombre de la persona que solicita.';
+		}
+
+		if(!isset($arrayForm['telefono']) || !$arrayForm['telefono'] || trim($arrayForm['telefono']) == '') {
 			return 'Por favor ingrese tel&eacute;fono.';
 		}
 
-		if(!isset($arrayForm['problema']) || !$arrayForm['problema'] || trim($arrayForm['problema']) == ''){
+		if(!isset($arrayForm['problema']) || !$arrayForm['problema'] || trim($arrayForm['problema']) == '') {
 			return 'Por favor seleccione tipo de problema.';
 		}
 
-		if(!isset($arrayForm['descripcion']) || !$arrayForm['descripcion'] || trim($arrayForm['descripcion']) == ''){
+		if(!isset($arrayForm['descripcion']) || !$arrayForm['descripcion'] || trim($arrayForm['descripcion']) == '') {
 			return 'Por favor ingrese detalles';
 		}
 
-		if(!isset($arrayForm['prioridad']) || !$arrayForm['prioridad'] || trim($arrayForm['prioridad']) == ''){
+		if(!isset($arrayForm['prioridad']) || !$arrayForm['prioridad'] || trim($arrayForm['prioridad']) == '') {
 			return 'Por favor seleccione prioridad.';
 		}		
 		return 'OK';
@@ -110,26 +139,59 @@ class Functions {
 			return $response;
 		}
 
-		// Recuperar consecutivo
-		$consecutive =  pg_query("SELECT sucursal_ticket FROM business.sucursales WHERE sucursal_codigo = 10");
+		// Recuperar consecutivo ticket
+		$consecutive =  pg_query("SELECT sucursal_ticket, sucursal_order FROM business.sucursales WHERE sucursal_codigo = 10");
 		$consecutive = pg_fetch_array($consecutive);
 		if(!isset($consecutive['sucursal_ticket']) || !is_numeric($consecutive['sucursal_ticket'])) {
-		    $response->msg = "Ocurrio un error recuperando consecutivo - Consulte al administrador.";
+		    $response->msg = "Ocurrio un error recuperando consecutivo ticket - Consulte al administrador.";
 			return $response;
 		}
 		$consecutivo = $consecutive['sucursal_ticket'] + 1;
 
+		// Recuperar consecutivo orden
+		if(!isset($consecutive['sucursal_order']) || !is_numeric($consecutive['sucursal_order'])) {
+		    $response->msg = "Ocurrio un error recuperando consecutivo orden - Consulte al administrador.";
+			return $response;
+		}
+		$consecutivoOrden = $consecutive['sucursal_order'] + 1;
+
+		// Begin transaction 
 		pg_query("BEGIN") or die("Could not start transaction");
 
-		pg_query("INSERT INTO business.tickets (ticket_number, ticket_client, ticket_priority, ticket_problemdescription, ticket_machine, ticket_datecreation, ticket_hourcreation, ticket_state, ticket_problem, ticket_source, ticket_usercreation, ticket_contact, ticket_contactphone, ticket_branch, ticket_clientname, ticket_order) VALUES ($consecutivo, '".$machine['client_costcenter']."', ".$arrayForm['prioridad'].", '".strtoupper($arrayForm['descripcion'])."', '".$machine['machine_plate']."', 'now()', '".date('H:i:s')."', 1, ".strtoupper($arrayForm['problema']).", 5, 999999999, '".strtoupper($arrayForm['solicita'])."', '".$arrayForm['telefono']."', 10, '".$machine['client_name']."', 0)");
+		// Insertar tickect
+		pg_query("INSERT INTO business.tickets (ticket_number, ticket_client, ticket_priority, ticket_problemdescription, ticket_machine, ticket_datecreation, ticket_hourcreation, ticket_state, ticket_problem, ticket_source, ticket_usercreation, ticket_contact, ticket_contactphone, ticket_branch, ticket_clientname, ticket_order, ticket_email) VALUES ($consecutivo, '".$machine['client_costcenter']."', ".$arrayForm['prioridad'].", '".strtoupper($arrayForm['descripcion'])."', '".$machine['machine_plate']."', 'now()', '".date('H:i:s')."', 2, 7, 5, 999999999, '".strtoupper($arrayForm['solicita'])."', '".$arrayForm['telefono']."', 10, '".$machine['client_name']."', $consecutivoOrden, '".strtolower($arrayForm['email'])."')");
 
-		pg_query("UPDATE business.sucursales SET sucursal_ticket = $consecutivo WHERE sucursal_codigo = 10");
+		// Insertar orden
+		pg_query("INSERT INTO business.orders (order_number, order_branch, order_client, order_machine, order_date, order_hour, order_ubication, order_area, order_area2, order_address, order_contact, order_person_call, order_problem, order_problem_type, order_priority, order_close, order_user_creation, order_date_creation, order_hour_creation, order_cont, order_document, order_type, order_client_name, order_technician, order_technician_name, order_cancellation, order_finaly_cont, order_services, order_ubication_name, order_project, order_source, order_zone, order_ticket) VALUES ($consecutivoOrden, 10, '".$machine['client_costcenter']."', '".$machine['machine_plate']."', 'now()', '".date('H:i:s')."', '".$machine['area_municipality']."', '".$machine['area_name']."', '".$machine['area_name2']."', '".$machine['area_address']."', '".($machine['contact_first_name'].' '.$machine['contact_last_name'])."', '".strtoupper($arrayForm['solicita'])."', '".strtoupper($arrayForm['descripcion'])."', '".$arrayForm['problema']."', ".$arrayForm['prioridad'].", false, 999999999, 'now()', '".date('H:i:s')."', ".$machine['machine_cont'].", 'ORDER', 1, '".$machine['client_name']."', '".$machine['project_technician']."', '".($machine['technician_first_name'].' '.$machine['technician_last_name'])."', false, 0, 0, '".$machine['municipio_nombre']."', ".$machine['project_id'].", 7, '".$machine['project_zone']."', $consecutivo)"); 	
 
-	    pg_query("COMMIT") or die("Transaction commit failed\n");
+
+		// Actualizar consecutivos
+		pg_query("UPDATE business.sucursales SET sucursal_ticket = $consecutivo, sucursal_order = $consecutivoOrden WHERE sucursal_codigo = 10");
+
+		// Commit transaction 
+	    pg_query("COMMIT") or die("Transaction commit failed\n"); 
 	    // pg_query("ROLLBACK") or die("Transaction rollback failed");
 
+		$mail = new phpmailer();
+		$mail->PluginDir = "PHPMailer_v2.0.0/";
+		$mail->SetLanguage( 'es', 'PHPMailer_v2.0.0/language/' );
+		$mail->Mailer = "smtp";
+		$mail->Host = "smtp.granimagen.com";          
+		$mail->SMTPAuth = true;
+		$mail->Username = "alvaroforero@granimagen.com";
+		$mail->Password = "alvaroforero2016";
+		$mail->From = "alvaroforero@granimagen.com";
+		$mail->FromName = "Gran Imagen - Ticket de servicio";
+		$mail->Timeout = 50;
+		$mail->AddAddress(strtolower($arrayForm['email']));
+		$mail->Subject = "Ticket #$consecutivo - ".date("Y-m-d H:i:s");
+		$Msg="Se generado con exito el ticket #".$consecutivo.", por favor guarde este n&uacute;mero para el seguimiento del mismo";
+		$mail->Body = stripslashes($Msg);
+		$mail->AltBody = stripslashes($Msg);
+		$exito = $mail->Send();
+
 	    $response->success = true;
-	    $response->msg = "Se generado con existo el ticket #{$consecutivo}, por favor guarde este n&uacute;mero para el seguimiento del mismo.";
+	    $response->msg = "Se generado con exito el ticket #$consecutivo, por favor guarde este n&uacute;mero para el seguimiento del mismo.";
 		return $response;
 	}
 
